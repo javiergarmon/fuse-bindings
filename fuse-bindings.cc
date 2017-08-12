@@ -38,7 +38,8 @@ using namespace v8;
 #include <fstream>
 #include <thread>
 
-static std::ofstream
+static std::ofstream logFile;
+
 enum bindings_ops_t {
   OP_INIT = 0,
   OP_ERROR,
