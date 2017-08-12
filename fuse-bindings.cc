@@ -864,7 +864,9 @@ NAN_INLINE static void bindings_set_dirs (operation_data *operation, Local<Array
 }
 
 NAN_METHOD(OpCallback) {
+  mutex_lock(&mutex);
   operation_data *operation = operations_map[ info[ 0 ]->Uint32Value() ];
+  mutex_unlock(&mutex);
   operation->result = (info.Length() > 1 && info[1]->IsNumber()) ? info[1]->Uint32Value() : 0;
   bindings_current = NULL; // ToDo -> Ver para que sirve
   if (!operation->result) {
