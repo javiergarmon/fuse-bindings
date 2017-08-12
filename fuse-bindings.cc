@@ -953,7 +953,7 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
   Local<Value> tmp[] = {Nan::New<Number>(operation->index), Nan::New<FunctionTemplate>(OpCallback)->GetFunction()};
   Nan::Callback *callbackGenerator = new Nan::Callback(callback_constructor->Call(2, tmp).As<Function>());
   Local<Function> callback = callbackGenerator->GetFunction();
-  delete callbackGenerator;
+  //delete callbackGenerator;
 
   b->result = -1;
 
