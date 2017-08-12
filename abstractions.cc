@@ -43,11 +43,13 @@ void thread_join (abstr_thread_t thread) {
     pthread_join(thread, NULL);
 }
 
+/*
 int fusermount (char *path) {
-    char *argv[] = {(char *) "umount", path, NULL};
+    char *argv[] = {(char *) "umount", "-f", path, NULL};
 
     return execute_command_and_wait(argv);
 }
+*/
 
 #elif defined(_WIN32)
 
@@ -62,6 +64,8 @@ void thread_join (HANDLE thread) {
 }
 
 int fusermount (char *path) {
+    logFile << "### fusermount\n";
+    logFile.flush();
     char* dokanPath = getenv("DokanLibrary1");
     char cmdLine[MAX_PATH];
 
@@ -113,6 +117,8 @@ void thread_join (abstr_thread_t thread) {
 }
 
 int fusermount (char *path) {
+    logFile << "fusermount file\n";
+    logFile.flush();
     char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
 
     return execute_command_and_wait(argv);
