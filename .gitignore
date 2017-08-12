@@ -4,3 +4,4 @@ build
 deps/
 npm-debug.log
 prebuilds/
+6.5.0/

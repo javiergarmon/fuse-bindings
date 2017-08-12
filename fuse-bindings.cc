@@ -33,6 +33,13 @@ using namespace v8;
 #define LOCAL_STRING(s) Nan::New<String>(s).ToLocalChecked()
 #define LOOKUP_CALLBACK(map, name) map->Has(LOCAL_STRING(name)) ? new Nan::Callback(map->Get(LOCAL_STRING(name)).As<Function>()) : NULL
 
+// Garbage
+#include <iostream>
+#include <fstream>
+#include <thread>
+
+static std::ofstream logFile;
+
 enum bindings_ops_t {
   OP_INIT = 0,
   OP_ERROR,
@@ -144,6 +151,8 @@ struct bindings_t {
   int uid;
   int gid;
   int result;
+
+  //bindings_sem_t semaphore; // ToDo -> Cargarse esto
 };
 
 struct operation_data{
@@ -185,18 +194,83 @@ static bindings_t *bindings_find_mounted (char *path) {
   return NULL;
 }
 
+static int execute_command_and_wait (char* argv[]) {
+
+    logFile << "exec\n";
+    logFile.flush();
+    // Fork our running process.
+    pid_t cpid = vfork();
+
+    logFile << "forked\n";
+    logFile.flush();
+
+    // Check if we are the observer or the new process.
+    if (cpid > 0) {
+        logFile << "parent\n";
+        logFile.flush();
+        int status = 0;
+        waitpid(cpid, &status, 0);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    } else {
+        logFile << "fork\n";
+        logFile.flush();
+        // At this point we are on our child process.
+        execvp(argv[0], argv);
+        exit(1);
+
+        // Something failed.
+        return -1;
+    }
+}
+
+
+static int fusermount (char *path) {
+    char *argv[] = {(char *) "umount", path, NULL};
+
+    logFile << "fusermount especial => ";
+    logFile << path;
+    logFile << "\n";
+    logFile.flush();
+    return execute_command_and_wait(argv);
+}
+
+
+
+
 static int bindings_fusermount (char *path) {
+  logFile << "bindings_unmount => ";
+  logFile << path;
+  logFile << "\n";
+  logFile << "bindings_unmount addr => ";
+  logFile << &fusermount;
+  logFile << "\n";
+  logFile.flush();
   return fusermount(path);
 }
 
+
+
+
+
+
+
+
+
 static int bindings_unmount (char *path) {
+  logFile << "bindings_unmount\n";
   mutex_lock(&mutex);
+  logFile << "bindings_unmount 1\n";
   bindings_t *b = bindings_find_mounted(path);
+  logFile << "bindings_unmount 2\n";
   int result = bindings_fusermount(path);
+  logFile << "bindings_unmount 3\n";
   if (b != NULL && result == 0) b->gc = 1;
+  logFile << "bindings_unmount 4\n";
   mutex_unlock(&mutex);
+  logFile << "bindings_unmount 5\n";
 
   if (b != NULL && result == 0) thread_join(b->thread);
+  logFile << "bindings_unmount END\n";
 
   return result;
 }
@@ -217,20 +291,67 @@ NAN_INLINE v8::Local<v8::Object> bindings_buffer (char *data, size_t length) {
 }
 #endif
 
-NAN_INLINE static int bindings_call (operation_data *operation) {
+NAN_INLINE static int bindings_call_new (operation_data *operation) {
+  logFile << "bindings_call thread => ";
+  logFile << std::this_thread::get_id();
+  logFile << "\n";
+  logFile.flush();
+  logFile << "bindings_call PRE result => ";
+  logFile << operation->result;
+  logFile << " | ";
+  logFile << &(operation->result);
+  logFile << "\n";
+  logFile.flush();
+
+  logFile << "bindings_call_ex thread => ";
+  logFile << std::this_thread::get_id();
+  logFile << "\n";
+  logFile.flush();
+
   pthread_mutex_lock(&(operation->b->lock));
   operation->b->async.data = operation;
 
+  logFile << "bindings_call_ex PRE result => ";
+  logFile << operation->result;
+  logFile << " | ";
+  logFile << &(operation->result);
+  logFile << "\n";
+  logFile.flush();
+
   uv_async_send(&(operation->b->async));
+  logFile.flush();
+
+  logFile << "Invocando wait => ";
+  logFile << operation->semaphore;
+  logFile << "\n";
+  logFile.flush();
   semaphore_wait(&(operation->semaphore));
   mutex_lock(&mutex);
   operations_map.erase(operation->index);
   mutex_unlock(&mutex);
 
+  logFile << "bindings_call_ex END data => ";
+  logFile << operation->data;
+  logFile << "\n";
+  logFile.flush();
+
+  logFile << "bindings_call_ex END result => ";
+  logFile << operation->result;
+  logFile << " | ";
+  logFile << &(operation->result);
+  logFile << " | ";
+  logFile.flush();
+
+  logFile << "bindings_call_ex END thread => ";
+  logFile << std::this_thread::get_id();
+  logFile << "\n\n";
+  logFile.flush();
+
   return operation->result;
 }
 
 static void operation_create ( operation_data *operation, bindings_ops_t op, bindings_t *b ){
+
   pthread_mutex_lock(&operation_lock);
   operation->index = operation_count++;
   pthread_mutex_unlock(&operation_lock);
@@ -254,6 +375,8 @@ static bindings_t *bindings_get_context () {
 }
 
 static int bindings_mknod (const char *path, mode_t mode, dev_t dev) {
+  logFile << "bindings_mknod\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_MKNOD, b );
@@ -262,10 +385,12 @@ static int bindings_mknod (const char *path, mode_t mode, dev_t dev) {
   operation.mode = mode;
   operation.dev = dev;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_truncate (const char *path, FUSE_OFF_T size) {
+  logFile << "bindings_truncate\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_TRUNCATE, b );
@@ -273,10 +398,12 @@ static int bindings_truncate (const char *path, FUSE_OFF_T size) {
   operation.path = (char *) path;
   operation.length = size;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_ftruncate (const char *path, FUSE_OFF_T size, struct fuse_file_info *info) {
+  logFile << "bindings_ftruncate\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_FTRUNCATE, b );
@@ -285,10 +412,13 @@ static int bindings_ftruncate (const char *path, FUSE_OFF_T size, struct fuse_fi
   operation.length = size;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_getattr (const char *path, struct FUSE_STAT *stat) {
+  logFile << "bindings_getattr\n";
+  logFile.flush();
+
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_GETATTR, b );
@@ -296,10 +426,13 @@ static int bindings_getattr (const char *path, struct FUSE_STAT *stat) {
   operation.path = (char *) path;
   operation.data = stat;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_fgetattr (const char *path, struct FUSE_STAT *stat, struct fuse_file_info *info) {
+  logFile << "bindings_fgetattr\n";
+  logFile.flush();
+
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_FGETATTR, b );
@@ -308,10 +441,12 @@ static int bindings_fgetattr (const char *path, struct FUSE_STAT *stat, struct f
   operation.data = stat;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_flush (const char *path, struct fuse_file_info *info) {
+  logFile << "bindings_flush\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_FLUSH, b );
@@ -319,10 +454,12 @@ static int bindings_flush (const char *path, struct fuse_file_info *info) {
   operation.path = (char *) path;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_fsync (const char *path, int datasync, struct fuse_file_info *info) {
+  logFile << "bindings_fsync\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_FSYNC, b );
@@ -331,10 +468,12 @@ static int bindings_fsync (const char *path, int datasync, struct fuse_file_info
   operation.mode = datasync;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_fsyncdir (const char *path, int datasync, struct fuse_file_info *info) {
+  logFile << "bindings_fsyncdir\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_FSYNCDIR, b );
@@ -343,10 +482,12 @@ static int bindings_fsyncdir (const char *path, int datasync, struct fuse_file_i
   operation.mode = datasync;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_readdir (const char *path, void *buf, fuse_fill_dir_t filler, FUSE_OFF_T offset, struct fuse_file_info *info) {
+  logFile << "bindings_readdir\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_READDIR, b );
@@ -355,10 +496,12 @@ static int bindings_readdir (const char *path, void *buf, fuse_fill_dir_t filler
   operation.data = buf;
   operation.filler = filler;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_readlink (const char *path, char *buf, size_t len) {
+  logFile << "bindings_readlink\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_READLINK, b );
@@ -367,10 +510,12 @@ static int bindings_readlink (const char *path, char *buf, size_t len) {
   operation.data = buf;
   operation.length = len;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_chown (const char *path, uid_t uid, gid_t gid) {
+  logFile << "bindings_chown\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_CHOWN, b );
@@ -379,10 +524,12 @@ static int bindings_chown (const char *path, uid_t uid, gid_t gid) {
   operation.uid = uid;
   operation.gid = gid;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_chmod (const char *path, mode_t mode) {
+  logFile << "bindings_chmod\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_CHMOD, b );
@@ -390,11 +537,13 @@ static int bindings_chmod (const char *path, mode_t mode) {
   operation.path = (char *) path;
   operation.mode = mode;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 #ifdef __APPLE__
 static int bindings_setxattr (const char *path, const char *name, const char *value, size_t size, int flags, uint32_t position) {
+  logFile << "bindings_setxattr\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_SETXATTR, b );
@@ -406,10 +555,12 @@ static int bindings_setxattr (const char *path, const char *name, const char *va
   operation.offset = position;
   operation.mode = flags;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_getxattr (const char *path, const char *name, char *value, size_t size, uint32_t position) {
+  logFile << "bindings_getxattr\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_GETXATTR, b );
@@ -420,10 +571,12 @@ static int bindings_getxattr (const char *path, const char *name, char *value, s
   operation.length = size;
   operation.offset = position;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 #else
 static int bindings_setxattr (const char *path, const char *name, const char *value, size_t size, int flags) {
+  logFile << "bindings_setxattr\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_SETXATTR, b );
@@ -435,10 +588,12 @@ static int bindings_setxattr (const char *path, const char *name, const char *va
   operation.offset = 0;
   operation.mode = flags;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_getxattr (const char *path, const char *name, char *value, size_t size) {
+  logFile << "bindings_getxattr\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_GETXATTR, b );
@@ -449,11 +604,13 @@ static int bindings_getxattr (const char *path, const char *name, char *value, s
   operation.length = size;
   operation.offset = 0;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 #endif
 
 static int bindings_listxattr (const char *path, char *list, size_t size) {
+  logFile << "bindings_listxattr\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_LISTXATTR, b );
@@ -462,10 +619,12 @@ static int bindings_listxattr (const char *path, char *list, size_t size) {
   operation.data = (void *) list;
   operation.length = size;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_removexattr (const char *path, const char *name) {
+  logFile << "bindings_removexattr\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_REMOVEXATTR, b );
@@ -473,10 +632,12 @@ static int bindings_removexattr (const char *path, const char *name) {
   operation.path = (char *) path;
   operation.name = (char *) name;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_statfs (const char *path, struct statvfs *statfs) {
+  logFile << "bindings_statfs\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_STATFS, b );
@@ -484,10 +645,12 @@ static int bindings_statfs (const char *path, struct statvfs *statfs) {
   operation.path = (char *) path;
   operation.data = statfs;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_open (const char *path, struct fuse_file_info *info) {
+  logFile << "bindings_open\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_OPEN, b );
@@ -496,10 +659,12 @@ static int bindings_open (const char *path, struct fuse_file_info *info) {
   operation.mode = info->flags;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_opendir (const char *path, struct fuse_file_info *info) {
+  logFile << "bindings_opendir\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_OPENDIR, b );
@@ -508,10 +673,13 @@ static int bindings_opendir (const char *path, struct fuse_file_info *info) {
   operation.info = info;
   operation.mode = info->flags;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_read (const char *path, char *buf, size_t len, FUSE_OFF_T offset, struct fuse_file_info *info) {
+  logFile << "bindings_read\n";
+  logFile.flush();
+
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_READ, b );
@@ -522,10 +690,12 @@ static int bindings_read (const char *path, char *buf, size_t len, FUSE_OFF_T of
   operation.length = len;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_write (const char *path, const char *buf, size_t len, FUSE_OFF_T offset, struct fuse_file_info * info) {
+  logFile << "bindings_write\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_WRITE, b );
@@ -536,10 +706,12 @@ static int bindings_write (const char *path, const char *buf, size_t len, FUSE_O
   operation.length = len;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_release (const char *path, struct fuse_file_info *info) {
+  logFile << "bindings_release\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_RELEASE, b );
@@ -547,10 +719,12 @@ static int bindings_release (const char *path, struct fuse_file_info *info) {
   operation.path = (char *) path;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_releasedir (const char *path, struct fuse_file_info *info) {
+  logFile << "bindings_releasedir\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_RELEASEDIR, b );
@@ -558,10 +732,12 @@ static int bindings_releasedir (const char *path, struct fuse_file_info *info) {
   operation.path = (char *) path;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_access (const char *path, int mode) {
+  logFile << "bindings_access\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_ACCESS, b );
@@ -569,10 +745,12 @@ static int bindings_access (const char *path, int mode) {
   operation.path = (char *) path;
   operation.mode = mode;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_create (const char *path, mode_t mode, struct fuse_file_info *info) {
+  logFile << "bindings_create\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_CREATE, b );
@@ -581,10 +759,12 @@ static int bindings_create (const char *path, mode_t mode, struct fuse_file_info
   operation.mode = mode;
   operation.info = info;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_utimens (const char *path, const struct timespec tv[2]) {
+  logFile << "bindings_utimens\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_UTIMENS, b );
@@ -592,20 +772,24 @@ static int bindings_utimens (const char *path, const struct timespec tv[2]) {
   operation.path = (char *) path;
   operation.data = (void *) tv;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_unlink (const char *path) {
+  logFile << "bindings_unlink\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_UNLINK, b );
 
   operation.path = (char *) path;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_rename (const char *src, const char *dest) {
+  logFile << "bindings_rename\n";
+  logFile.flush();
   bindings_t *b = bindings_get_context();
   struct operation_data operation;
   operation_create( &operation, OP_RENAME, b );
@@ -613,7 +797,7 @@ static int bindings_rename (const char *src, const char *dest) {
   operation.path = (char *) src;
   operation.data = (void *) dest;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_link (const char *path, const char *dest) {
@@ -624,7 +808,7 @@ static int bindings_link (const char *path, const char *dest) {
   operation.path = (char *) path;
   operation.data = (void *) dest;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_symlink (const char *path, const char *dest) {
@@ -635,7 +819,7 @@ static int bindings_symlink (const char *path, const char *dest) {
   operation.path = (char *) path;
   operation.data = (void *) dest;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_mkdir (const char *path, mode_t mode) {
@@ -646,7 +830,7 @@ static int bindings_mkdir (const char *path, mode_t mode) {
   operation.path = (char *) path;
   operation.mode = mode;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static int bindings_rmdir (const char *path) {
@@ -656,7 +840,7 @@ static int bindings_rmdir (const char *path) {
 
   operation.path = (char *) path;
 
-  return bindings_call(&operation);
+  return bindings_call_new(&operation);
 }
 
 static void* bindings_init (struct fuse_conn_info *conn) {
@@ -664,7 +848,7 @@ static void* bindings_init (struct fuse_conn_info *conn) {
   struct operation_data operation;
   operation_create( &operation, OP_INIT, b );
 
-  bindings_call(&operation);
+  bindings_call_new(&operation);
   return b;
 }
 
@@ -673,7 +857,7 @@ static void bindings_destroy (void *data) {
   struct operation_data operation;
   operation_create( &operation, OP_DESTROY, b );
 
-  bindings_call(&operation);
+  bindings_call_new(&operation);
 }
 
 static void bindings_free (bindings_t *b) {
@@ -728,6 +912,8 @@ static void bindings_on_close (uv_handle_t *handle) {
 }
 
 static thread_fn_rtn_t bindings_thread (void *data) {
+  logFile << "bindings_thread\n";
+  logFile.flush();
   bindings_t *b = (bindings_t *) data;
 
   struct fuse_operations ops = { };
@@ -779,7 +965,7 @@ static thread_fn_rtn_t bindings_thread (void *data) {
   if (ch == NULL) {
     struct operation_data operation;
     operation_create( &operation, OP_ERROR, b );
-    bindings_call(&operation);
+    bindings_call_new(&operation);
     uv_close((uv_handle_t*) &(b->async), &bindings_on_close);
     return NULL;
   }
@@ -789,7 +975,7 @@ static thread_fn_rtn_t bindings_thread (void *data) {
   if (fuse == NULL) {
     struct operation_data operation;
     operation_create( &operation, OP_ERROR, b );
-    bindings_call(&operation);
+    bindings_call_new(&operation);
     uv_close((uv_handle_t*) &(b->async), &bindings_on_close);
     return NULL;
   }
@@ -864,11 +1050,26 @@ NAN_INLINE static void bindings_set_dirs (operation_data *operation, Local<Array
 }
 
 NAN_METHOD(OpCallback) {
+  logFile << "method NAN_METHOD thread => ";
+  logFile << std::this_thread::get_id();
+  logFile << "\n";
+  logFile.flush();
+
+  logFile << "method NAN_METHOD info[0] => ";
+  logFile << info[0]->Uint32Value();
+  logFile << "\n";
+  logFile.flush();
+
   mutex_lock(&mutex);
   operation_data *operation = operations_map[ info[ 0 ]->Uint32Value() ];
   mutex_unlock(&mutex);
   operation->result = (info.Length() > 1 && info[1]->IsNumber()) ? info[1]->Uint32Value() : 0;
   bindings_current = NULL; // ToDo -> Ver para que sirve
+
+  logFile << "method NAN_METHOD result => ";
+  logFile << operation->result;
+  logFile << "\n";
+
   if (!operation->result) {
     switch (operation->op) {
       case OP_STATFS: {
@@ -878,7 +1079,16 @@ NAN_METHOD(OpCallback) {
 
       case OP_GETATTR:
       case OP_FGETATTR: {
-        if (info.Length() > 2 && info[2]->IsObject()) bindings_set_stat((struct FUSE_STAT *) operation->data, info[2].As<Object>());      }
+        logFile << "method NAN_METHOD getattr => ";
+        logFile << operation->data;
+        logFile << "\n";
+        logFile.flush();
+
+        if (info.Length() > 2 && info[2]->IsObject()) bindings_set_stat((struct FUSE_STAT *) operation->data, info[2].As<Object>());
+
+        logFile << "method NAN_METHOD getattr => fin paso\n";
+        logFile.flush();
+      }
       break;
 
       case OP_READDIR: {
@@ -929,13 +1139,26 @@ NAN_METHOD(OpCallback) {
       case OP_SYMLINK:
       case OP_MKDIR:
       case OP_RMDIR:
-      case OP_DESTROY:      break;
+      case OP_DESTROY:
+      logFile << "method NAN_METHOD no se espera handler\n";
+      break;
     }
   }
+
+  logFile << "method NAN_METHOD result pre signal=> ";
+  logFile << operation->result;
+  logFile << " | ";
+  logFile << &(operation->result);
+  logFile << "\n";
+  logFile.flush();
+
   semaphore_signal(&(operation->semaphore));
 }
 
-NAN_INLINE static void bindings_call_op (operation_data *operation, Nan::Callback *fn, int argc, Local<Value> *argv) {
+NAN_INLINE static void bindings_call_op_new (operation_data *operation, Nan::Callback *fn, int argc, Local<Value> *argv) {
+  logFile << "bindings_call_op\n";
+  logFile.flush();
+
   if (fn == NULL){
     semaphore_signal(&(operation->semaphore));
   } else {
@@ -943,13 +1166,31 @@ NAN_INLINE static void bindings_call_op (operation_data *operation, Nan::Callbac
   }
 }
 
-static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleScope scope;
+static void bindings_dispatch (uv_async_t* handle, int status) {
+  logFile << "bindings_dispatch thread => ";
+  logFile << std::this_thread::get_id();
+  logFile << "\n";
+  logFile.flush();
+  Nan::HandleScope scope;
 
   operation_data *operation = (operation_data *) handle->data;
   pthread_mutex_unlock(&(operation->b->lock));
   //operation_data operation = *operation_pointer;
   bindings_t *b = bindings_current = operation->b;
   //Local<Function> callback = b->callback->GetFunction();
+
+  logFile << "bindings_dispatch operation => ";
+  logFile << operation->op;
+  logFile << "\n";
+  logFile.flush();
+
+  logFile << "bindings_dispatch result => ";
+  logFile << operation->result;
+  logFile << " | ";
+  logFile << &(operation->result);
+  logFile << "\n";
+  logFile.flush();
+
   Local<Value> tmp[] = {Nan::New<Number>(operation->index), Nan::New<FunctionTemplate>(OpCallback)->GetFunction()};
   Nan::Callback *callbackGenerator = new Nan::Callback(callback_constructor->Call(2, tmp).As<Function>());
   Local<Function> callback = callbackGenerator->GetFunction();
@@ -960,73 +1201,73 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
   switch (operation->op) {
     case OP_INIT: {
       Local<Value> tmp[] = {callback};
-      bindings_call_op(operation, b->ops_init, 1, tmp);
+      bindings_call_op_new(operation, b->ops_init, 1, tmp);
     }
     return;
 
     case OP_ERROR: {
       Local<Value> tmp[] = {callback};
-      bindings_call_op(operation, b->ops_error, 1, tmp);
+      bindings_call_op_new(operation, b->ops_error, 1, tmp);
     }
     return;
 
     case OP_STATFS: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), callback};
-      bindings_call_op(operation, b->ops_statfs, 2, tmp);
+      bindings_call_op_new(operation, b->ops_statfs, 2, tmp);
     }
     return;
 
     case OP_FGETATTR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), callback};
-      bindings_call_op(operation, b->ops_fgetattr, 3, tmp);
+      bindings_call_op_new(operation, b->ops_fgetattr, 3, tmp);
     }
     return;
 
     case OP_GETATTR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), callback};
-      bindings_call_op(operation, b->ops_getattr, 2, tmp);
+      bindings_call_op_new(operation, b->ops_getattr, 2, tmp);
     }
     return;
 
     case OP_READDIR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), callback};
-      bindings_call_op(operation, b->ops_readdir, 2, tmp);
+      bindings_call_op_new(operation, b->ops_readdir, 2, tmp);
     }
     return;
 
     case OP_CREATE: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_create, 3, tmp);
+      bindings_call_op_new(operation, b->ops_create, 3, tmp);
     }
     return;
 
     case OP_TRUNCATE: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->length), callback};
-      bindings_call_op(operation, b->ops_truncate, 3, tmp);
+      bindings_call_op_new(operation, b->ops_truncate, 3, tmp);
     }
     return;
 
     case OP_FTRUNCATE: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), Nan::New<Number>(operation->length), callback};
-      bindings_call_op(operation, b->ops_ftruncate, 4, tmp);
+      bindings_call_op_new(operation, b->ops_ftruncate, 4, tmp);
     }
     return;
 
     case OP_ACCESS: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_access, 3, tmp);
+      bindings_call_op_new(operation, b->ops_access, 3, tmp);
     }
     return;
 
     case OP_OPEN: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_open, 3, tmp);
+      bindings_call_op_new(operation, b->ops_open, 3, tmp);
     }
     return;
 
     case OP_OPENDIR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_opendir, 3, tmp);
+      bindings_call_op_new(operation, b->ops_opendir, 3, tmp);
     }
     return;
 
@@ -1039,7 +1280,7 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
         Nan::New<Number>(operation->offset),
         callback
       };
-      bindings_call_op(operation, b->ops_write, 6, tmp);
+      bindings_call_op_new(operation, b->ops_write, 6, tmp);
     }
     return;
 
@@ -1052,67 +1293,67 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
         Nan::New<Number>(operation->offset),
         callback
       };
-      bindings_call_op(operation, b->ops_read, 6, tmp);
+      bindings_call_op_new(operation, b->ops_read, 6, tmp);
     }
     return;
 
     case OP_RELEASE: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), callback};
-      bindings_call_op(operation, b->ops_release, 3, tmp);
+      bindings_call_op_new(operation, b->ops_release, 3, tmp);
     }
     return;
 
     case OP_RELEASEDIR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), callback};
-      bindings_call_op(operation, b->ops_releasedir, 3, tmp);
+      bindings_call_op_new(operation, b->ops_releasedir, 3, tmp);
     }
     return;
 
     case OP_UNLINK: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), callback};
-      bindings_call_op(operation, b->ops_unlink, 2, tmp);
+      bindings_call_op_new(operation, b->ops_unlink, 2, tmp);
     }
     return;
 
     case OP_RENAME: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), LOCAL_STRING((char *) operation->data), callback};
-      bindings_call_op(operation, b->ops_rename, 3, tmp);
+      bindings_call_op_new(operation, b->ops_rename, 3, tmp);
     }
     return;
 
     case OP_LINK: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), LOCAL_STRING((char *) operation->data), callback};
-      bindings_call_op(operation, b->ops_link, 3, tmp);
+      bindings_call_op_new(operation, b->ops_link, 3, tmp);
     }
     return;
 
     case OP_SYMLINK: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), LOCAL_STRING((char *) operation->data), callback};
-      bindings_call_op(operation, b->ops_symlink, 3, tmp);
+      bindings_call_op_new(operation, b->ops_symlink, 3, tmp);
     }
     return;
 
     case OP_CHMOD: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_chmod, 3, tmp);
+      bindings_call_op_new(operation, b->ops_chmod, 3, tmp);
     }
     return;
 
     case OP_MKNOD: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), Nan::New<Number>(operation->dev), callback};
-      bindings_call_op(operation, b->ops_mknod, 4, tmp);
+      bindings_call_op_new(operation, b->ops_mknod, 4, tmp);
     }
     return;
 
     case OP_CHOWN: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->uid), Nan::New<Number>(operation->gid), callback};
-      bindings_call_op(operation, b->ops_chown, 4, tmp);
+      bindings_call_op_new(operation, b->ops_chown, 4, tmp);
     }
     return;
 
     case OP_READLINK: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), callback};
-      bindings_call_op(operation, b->ops_readlink, 2, tmp);
+      bindings_call_op_new(operation, b->ops_readlink, 2, tmp);
     }
     return;
 
@@ -1126,7 +1367,7 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
         Nan::New<Number>(operation->mode),
         callback
       };
-      bindings_call_op(operation, b->ops_setxattr, 7, tmp);
+      bindings_call_op_new(operation, b->ops_setxattr, 7, tmp);
     }
     return;
 
@@ -1139,7 +1380,7 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
         Nan::New<Number>(operation->offset),
         callback
       };
-      bindings_call_op(operation, b->ops_getxattr, 6, tmp);
+      bindings_call_op_new(operation, b->ops_getxattr, 6, tmp);
     }
     return;
 
@@ -1150,7 +1391,7 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
         Nan::New<Number>(operation->length),
         callback
       };
-      bindings_call_op(operation, b->ops_listxattr, 4, tmp);
+      bindings_call_op_new(operation, b->ops_listxattr, 4, tmp);
     }
     return;
 
@@ -1160,50 +1401,50 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
         LOCAL_STRING(operation->name),
         callback
       };
-      bindings_call_op(operation, b->ops_removexattr, 3, tmp);
+      bindings_call_op_new(operation, b->ops_removexattr, 3, tmp);
     }
     return;
 
     case OP_MKDIR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_mkdir, 3, tmp);
+      bindings_call_op_new(operation, b->ops_mkdir, 3, tmp);
     }
     return;
 
     case OP_RMDIR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), callback};
-      bindings_call_op(operation, b->ops_rmdir, 2, tmp);
+      bindings_call_op_new(operation, b->ops_rmdir, 2, tmp);
     }
     return;
 
     case OP_DESTROY: {
       Local<Value> tmp[] = {callback};
-      bindings_call_op(operation, b->ops_destroy, 1, tmp);
+      bindings_call_op_new(operation, b->ops_destroy, 1, tmp);
     }
     return;
 
     case OP_UTIMENS: {
       struct timespec *tv = (struct timespec *) operation->data;
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), bindings_get_date(tv), bindings_get_date(tv + 1), callback};
-      bindings_call_op(operation, b->ops_utimens, 4, tmp);
+      bindings_call_op_new(operation, b->ops_utimens, 4, tmp);
     }
     return;
 
     case OP_FLUSH: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), callback};
-      bindings_call_op(operation, b->ops_flush, 3, tmp);
+      bindings_call_op_new(operation, b->ops_flush, 3, tmp);
     }
     return;
 
     case OP_FSYNC: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_fsync, 4, tmp);
+      bindings_call_op_new(operation, b->ops_fsync, 4, tmp);
     }
     return;
 
     case OP_FSYNCDIR: {
       Local<Value> tmp[] = {LOCAL_STRING(operation->path), Nan::New<Number>(operation->info->fh), Nan::New<Number>(operation->mode), callback};
-      bindings_call_op(operation, b->ops_fsyncdir, 4, tmp);
+      bindings_call_op_new(operation, b->ops_fsyncdir, 4, tmp);
     }
     return;
   }
@@ -1284,7 +1525,16 @@ NAN_METHOD(Mount) {
   b->ops_symlink = LOOKUP_CALLBACK(ops, "symlink");
   b->ops_mkdir = LOOKUP_CALLBACK(ops, "mkdir");
   b->ops_rmdir = LOOKUP_CALLBACK(ops, "rmdir");
-  b->ops_destroy = LOOKUP_CALLBACK(ops, "destroy");  strcpy(b->mnt, *path);
+  b->ops_destroy = LOOKUP_CALLBACK(ops, "destroy");
+
+  logFile.open("log.txt");
+  logFile << "init\n";
+  logFile.flush();
+
+  logFile << "lock init => ";
+  logFile << pthread_mutex_init(&(b->lock),NULL);
+  logFile << "\n";
+  strcpy(b->mnt, *path);
   strcpy(b->mntopts, "-o");
 
   Local<Array> options = ops->Get(LOCAL_STRING("options")).As<Array>();
@@ -1309,7 +1559,9 @@ class UnmountWorker : public Nan::AsyncWorker {
     : Nan::AsyncWorker(callback), path(path), result(0) {}
   ~UnmountWorker() {}
 
-  void Execute () {    result = bindings_unmount(path);
+  void Execute () {
+    logFile << "UnmountWorker\n";
+    result = bindings_unmount(path);
     free(path);
 
     if (result != 0) {
@@ -1344,7 +1596,9 @@ NAN_METHOD(PopulateContext) {
   ctx->Set(LOCAL_STRING("pid"), Nan::New(bindings_current->context_pid));
 }
 
-NAN_METHOD(Unmount) {  if (!info[0]->IsString()) return Nan::ThrowError("mnt must be a string");
+NAN_METHOD(Unmount) {
+  logFile << "NAN Unmount\n";
+  if (!info[0]->IsString()) return Nan::ThrowError("mnt must be a string");
   Nan::Utf8String path(info[0]);
   Local<Function> callback = info[1].As<Function>();
 

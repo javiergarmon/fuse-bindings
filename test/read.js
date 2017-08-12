@@ -50,9 +50,10 @@ tape('read', function (t) {
           fs.createReadStream(path.join(mnt, 'test'), {start: 6, end: 10}).pipe(concat(function (buf) {
             t.same(buf, new Buffer('world'), 'partial read file + start offset')
 
-            fuse.unmount(mnt, function () {
+            /*fuse.unmount(mnt, function () {*/
               t.end()
-            })
+              setTimeout( process.exit, 2500 )
+            /*})*/
           }))
         }))
       })
