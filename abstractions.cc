@@ -64,8 +64,8 @@ void thread_join (HANDLE thread) {
 }
 
 int fusermount (char *path) {
-    logFile << "### fusermount\n";
-    logFile.flush();
+    /*logFile << "### fusermount\n";
+    logFile.flush();*/
     char* dokanPath = getenv("DokanLibrary1");
     char cmdLine[MAX_PATH];
 
@@ -117,8 +117,8 @@ void thread_join (abstr_thread_t thread) {
 }
 
 int fusermount (char *path) {
-    logFile << "fusermount file\n";
-    logFile.flush();
+    /*logFile << "fusermount file\n";
+    logFile.flush();*/
     char *argv[] = {(char *) "fusermount", (char *) "-q", (char *) "-u", path, NULL};
 
     return execute_command_and_wait(argv);
