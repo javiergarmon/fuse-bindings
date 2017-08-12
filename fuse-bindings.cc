@@ -33,13 +33,6 @@ using namespace v8;
 #define LOCAL_STRING(s) Nan::New<String>(s).ToLocalChecked()
 #define LOOKUP_CALLBACK(map, name) map->Has(LOCAL_STRING(name)) ? new Nan::Callback(map->Get(LOCAL_STRING(name)).As<Function>()) : NULL
 
-// Garbage
-#include <iostream>
-#include <fstream>
-#include <thread>
-
-static std::ofstream logFile;
-
 enum bindings_ops_t {
   OP_INIT = 0,
   OP_ERROR,
@@ -230,7 +223,9 @@ NAN_INLINE static int bindings_call (operation_data *operation) {
 
   uv_async_send(&(operation->b->async));
   semaphore_wait(&(operation->semaphore));
+  mutex_lock(&mutex);
   operations_map.erase(operation->index);
+  mutex_unlock(&mutex);
 
   return operation->result;
 }
@@ -244,7 +239,9 @@ static void operation_create ( operation_data *operation, bindings_ops_t op, bin
 
   semaphore_init(&(operation->semaphore));
 
+  mutex_lock(&mutex);
   operations_map[ operation->index ] = operation;
+  mutex_unlock(&mutex);
 }
 
 static bindings_t *bindings_get_context () {
@@ -954,6 +951,7 @@ static void bindings_dispatch (uv_async_t* handle, int status) {  Nan::HandleSco
   Local<Value> tmp[] = {Nan::New<Number>(operation->index), Nan::New<FunctionTemplate>(OpCallback)->GetFunction()};
   Nan::Callback *callbackGenerator = new Nan::Callback(callback_constructor->Call(2, tmp).As<Function>());
   Local<Function> callback = callbackGenerator->GetFunction();
+  delete callbackGenerator;
 
   b->result = -1;
 
