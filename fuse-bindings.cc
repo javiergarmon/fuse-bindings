@@ -196,6 +196,7 @@ static bindings_t *bindings_find_mounted (char *path) {
 
 static int execute_command_and_wait (char* argv[]) {
 
+  /*
     logFile << "exec\n";
     logFile.flush();
     // Fork our running process.
@@ -220,7 +221,7 @@ static int execute_command_and_wait (char* argv[]) {
 
         // Something failed.
         return -1;
-    }
+    }*/
 }
 
 
@@ -322,7 +323,7 @@ NAN_INLINE static int bindings_call_new (operation_data *operation) {
   logFile.flush();
 
   logFile << "Invocando wait => ";
-  logFile << operation->semaphore;
+//  logFile << operation->semaphore;
   logFile << "\n";
   logFile.flush();
   semaphore_wait(&(operation->semaphore));
