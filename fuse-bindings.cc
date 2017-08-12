@@ -327,6 +327,7 @@ NAN_INLINE static int bindings_call_new (operation_data *operation) {
   logFile << "\n";
   logFile.flush();
   semaphore_wait(&(operation->semaphore));
+  semaphore_destroy(&(operation->semaphore));
   mutex_lock(&mutex);
   operations_map.erase(operation->index);
   mutex_unlock(&mutex);

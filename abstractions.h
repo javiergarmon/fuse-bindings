@@ -29,6 +29,8 @@ NAN_INLINE static void semaphore_signal (dispatch_semaphore_t *sem) {
   dispatch_semaphore_signal(*sem);
 }
 
+NAN_INLINE static void semaphore_destroy (dispatch_semaphore_t *sem) {}
+
 extern pthread_mutex_t mutex;
 
 NAN_INLINE static void mutex_lock (pthread_mutex_t *mutex) {
@@ -101,6 +103,10 @@ NAN_INLINE static void semaphore_wait (sem_t *sem) {
 
 NAN_INLINE static void semaphore_signal (sem_t *sem) {
   sem_post(sem);
+}
+
+NAN_INLINE static void semaphore_destroy (sem_t *sem) {
+  sem_destroy(sem);
 }
 
 extern pthread_mutex_t mutex;
